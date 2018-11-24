@@ -24,6 +24,7 @@ package com.spotify.docker;
 import org.apache.maven.plugins.annotations.Mojo;
 
 import com.spotify.docker.client.DockerClient;
+import com.spotify.docker.client.exceptions.ConflictException;
 import com.spotify.docker.client.exceptions.DockerException;
 import com.spotify.docker.client.exceptions.ImageNotFoundException;
 import com.spotify.docker.client.messages.Image;
@@ -50,8 +51,10 @@ public class RemoveDanglingImagesMojo extends AbstractDockerMojo {
                 }
             } catch (ImageNotFoundException | NotFoundException e) {
                 // ignoring 404 errors only
-                getLog().warn("Image " + image
-                    + " doesn't exist and cannot be deleted - ignoring", e);
+                getLog().warn(String.format("Image [%s] doesn't exist and cannot be deleted "
+                    + "- ignoring", image));
+            } catch (ConflictException e) {
+                getLog().info(String.format("In use : %s - skipping", image.id()));
             }
         }
     }
