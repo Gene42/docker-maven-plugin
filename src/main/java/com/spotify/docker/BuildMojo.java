@@ -21,36 +21,6 @@
 
 package com.spotify.docker;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Ordering;
-import com.google.common.collect.Sets;
-
-import com.spotify.docker.client.AnsiProgressHandler;
-import com.spotify.docker.client.DockerClient;
-import com.spotify.docker.client.exceptions.DockerException;
-import com.typesafe.config.Config;
-import com.typesafe.config.ConfigException;
-import com.typesafe.config.ConfigFactory;
-import com.typesafe.config.ConfigValue;
-
-import org.apache.maven.artifact.Artifact;
-import org.apache.maven.model.Resource;
-import org.apache.maven.plugin.MojoExecutionException;
-import org.apache.maven.plugin.PluginParameterExpressionEvaluator;
-import org.apache.maven.plugins.annotations.Mojo;
-import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.project.MavenProject;
-import org.codehaus.plexus.component.configurator.expression.ExpressionEvaluationException;
-import org.codehaus.plexus.util.DirectoryScanner;
-import org.codehaus.plexus.util.FileUtils;
-import org.eclipse.jgit.api.errors.GitAPIException;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -69,6 +39,35 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+
+import org.apache.maven.artifact.Artifact;
+import org.apache.maven.model.Resource;
+import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugin.PluginParameterExpressionEvaluator;
+import org.apache.maven.plugins.annotations.Mojo;
+import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.maven.project.MavenProject;
+import org.codehaus.plexus.component.configurator.expression.ExpressionEvaluationException;
+import org.codehaus.plexus.util.DirectoryScanner;
+import org.codehaus.plexus.util.FileUtils;
+import org.eclipse.jgit.api.errors.GitAPIException;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Ordering;
+import com.google.common.collect.Sets;
+import com.spotify.docker.client.AnsiProgressHandler;
+import com.spotify.docker.client.DockerClient;
+import com.spotify.docker.client.exceptions.DockerException;
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigException;
+import com.typesafe.config.ConfigFactory;
+import com.typesafe.config.ConfigValue;
 
 import static com.google.common.base.CharMatcher.WHITESPACE;
 import static com.google.common.base.Strings.isNullOrEmpty;
@@ -102,10 +101,10 @@ public class BuildMojo extends AbstractDockerMojo {
   private static final char WINDOWS_SEPARATOR = '\\';
 
   /**
-   * Json Object Mapper to encode arguments map 
+   * Json Object Mapper to encode arguments map
    */
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-  
+
   /**
    * Directory containing the Dockerfile. If the value is not set, the plugin will generate a
    * Dockerfile using the required baseImage value, plus the optional entryPoint, cmd and maintainer
@@ -120,6 +119,13 @@ public class BuildMojo extends AbstractDockerMojo {
    */
   @Parameter(property = "skipDockerBuild", defaultValue = "false")
   private boolean skipDockerBuild;
+
+    /**
+     * Flag to skip docker build, making build goal a no-op. This can be useful when docker:build
+     * is bound to package goal, and you want to build a jar but not a container. Defaults to false.
+     */
+    @Parameter(property = "skipDockerBuildIfPom", defaultValue = "false")
+    private boolean skipDockerBuildIfPom;
 
   /**
    * Flag to attempt to pull base images even if older images exists locally. Sends the equivalent
@@ -256,10 +262,10 @@ public class BuildMojo extends AbstractDockerMojo {
   private MavenProject mavenProject;
 
   @Parameter(property = "dockerBuildArgs")
-  private Map<String, String> buildArgs;  
-  
-  /** HEALTHCHECK. It expects a element for 'options' and 'cmd' 
-   * Added in docker 1.12 (https://docs.docker.com/engine/reference/builder/#/healthcheck). 
+  private Map<String, String> buildArgs;
+
+  /** HEALTHCHECK. It expects a element for 'options' and 'cmd'
+   * Added in docker 1.12 (https://docs.docker.com/engine/reference/builder/#/healthcheck).
    */
   @Parameter(property = "healthcheck")
   private Map<String, String> healthcheck;
@@ -289,7 +295,7 @@ public class BuildMojo extends AbstractDockerMojo {
   public boolean getForceTags() {
     return forceTags;
   }
-  
+
   private boolean weShouldSkipDockerBuild() {
     if (skipDockerBuild) {
       getLog().info("Property skipDockerBuild is set");
@@ -297,7 +303,7 @@ public class BuildMojo extends AbstractDockerMojo {
     }
 
     final String packaging = session.getCurrentProject().getPackaging();
-    if ("pom".equalsIgnoreCase(packaging)) {
+    if (skipDockerBuildIfPom && "pom".equalsIgnoreCase(packaging)) {
       getLog().info("Project packaging is " + packaging);
       return true;
     }
@@ -857,7 +863,7 @@ public class BuildMojo extends AbstractDockerMojo {
     return path.replace(WINDOWS_SEPARATOR, UNIX_SEPARATOR);
   }
 
-  private DockerClient.BuildParam[] buildParams() 
+  private DockerClient.BuildParam[] buildParams()
     throws UnsupportedEncodingException, JsonProcessingException {
     final List<DockerClient.BuildParam> buildParams = Lists.newArrayList();
     if (pullOnBuild) {
@@ -870,7 +876,7 @@ public class BuildMojo extends AbstractDockerMojo {
         buildParams.add(DockerClient.BuildParam.rm(false));
       }
     if (!buildArgs.isEmpty()) {
-      buildParams.add(DockerClient.BuildParam.create("buildargs", 
+      buildParams.add(DockerClient.BuildParam.create("buildargs",
         URLEncoder.encode(OBJECT_MAPPER.writeValueAsString(buildArgs), "UTF-8")));
     }
     return buildParams.toArray(new DockerClient.BuildParam[buildParams.size()]);
