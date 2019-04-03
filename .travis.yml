@@ -5,8 +5,18 @@ services:
 
 language: java
 
-jdk:
-  - oraclejdk7
+matrix:
+  include:
+    - jdk: openjdk8
+    - jdk: openjdk9
+      before_install:
+        - rm "${JAVA_HOME}/lib/security/cacerts"
+        - ln -s /etc/ssl/certs/java/cacerts "${JAVA_HOME}/lib/security/cacerts"
+    - jdk: openjdk10
+      before_install:
+        - rm "${JAVA_HOME}/lib/security/cacerts"
+        - ln -s /etc/ssl/certs/java/cacerts "${JAVA_HOME}/lib/security/cacerts"
+    - jdk: openjdk11
 
 env:
   global:
@@ -21,6 +31,8 @@ before_install:
   # troubleshooting info in case of problems
   - docker version
   - docker info
+
+script: mvn clean verify -B
 
 after_success:
   # test coverage reporting

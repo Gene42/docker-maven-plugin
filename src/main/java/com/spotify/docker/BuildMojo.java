@@ -65,6 +65,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
@@ -84,8 +86,10 @@ import static java.util.Collections.emptyList;
 /**
  * Used to build docker images.
  */
-@Mojo(name = "build")
+@Mojo(name = "build", threadSafe = true)
 public class BuildMojo extends AbstractDockerMojo {
+
+  private static final Lock LOCK = new ReentrantLock();
 
   /**
    * The Unix separator character.
@@ -209,9 +213,9 @@ public class BuildMojo extends AbstractDockerMojo {
 
   /**
    * If specified as true, a tag will be generated consisting of the first 7 characters of the most
-   * recent git commit ID, resulting in something like <tt>image:df8e8e6</tt>. If there are any
+   * recent git commit ID, resulting in something like {@code image:df8e8e6}. If there are any
    * changes not yet committed, the string '.DIRTY' will be appended to the end. Note, if a tag is
-   * explicitly specified in the <tt>newName</tt> parameter, this flag will be ignored.
+   * explicitly specified in the {@code newName} parameter, this flag will be ignored.
    */
   @Parameter(property = "useGitCommitId", defaultValue = "false")
   private boolean useGitCommitId;
@@ -219,10 +223,10 @@ public class BuildMojo extends AbstractDockerMojo {
   /**
    * Resources to include in the build. Specify resources by using the standard resource elements as
    * defined in the <a href="http://maven.apache.org/pom.html#Resources">resources</a> section in
-   * the pom reference. If dockerDirectory is not set, the <tt>targetPath</tt> value is the location
-   * in the container where the resource should be copied to. The value is relative to '<tt>/</tt>'
-   * in the container, and defaults to '<tt>.</tt>'. If dockerDirectory is set, <tt>targetPath</tt>
-   * is relative to the dockerDirectory, and defaults to '<tt>.</tt>'. In that case, the Dockerfile
+   * the pom reference. If dockerDirectory is not set, the {@code targetPath} value is the location
+   * in the container where the resource should be copied to. The value is relative to '{@code /}'
+   * in the container, and defaults to '{@code .}'. If dockerDirectory is set, {@code targetPath}
+   * is relative to the dockerDirectory, and defaults to '{@code .}'. In that case, the Dockerfile
    * can copy the resources into the container using the ADD instruction.
    */
   @Parameter(property = "dockerResources")
@@ -254,6 +258,12 @@ public class BuildMojo extends AbstractDockerMojo {
   @Parameter(property = "dockerBuildArgs")
   private Map<String, String> buildArgs;  
   
+  /** HEALTHCHECK. It expects a element for 'options' and 'cmd' 
+   * Added in docker 1.12 (https://docs.docker.com/engine/reference/builder/#/healthcheck). 
+   */
+  @Parameter(property = "healthcheck")
+  private Map<String, String> healthcheck;
+
   private PluginParameterExpressionEvaluator expressionEvaluator;
 
   public BuildMojo() {
@@ -279,9 +289,42 @@ public class BuildMojo extends AbstractDockerMojo {
   public boolean getForceTags() {
     return forceTags;
   }
+  
+  private boolean weShouldSkipDockerBuild() {
+    if (skipDockerBuild) {
+      getLog().info("Property skipDockerBuild is set");
+      return true;
+    }
+
+    final String packaging = session.getCurrentProject().getPackaging();
+    if ("pom".equalsIgnoreCase(packaging)) {
+      getLog().info("Project packaging is " + packaging);
+      return true;
+    }
+
+    if (dockerDirectory != null) {
+      final Path path = Paths.get(dockerDirectory, "Dockerfile");
+      if (!path.toFile().exists()) {
+        getLog().info("No Dockerfile in dockerDirectory");
+        return true;
+      }
+    }
+
+    return false;
+  }
 
   public boolean isSkipDockerBuild() {
     return skipDockerBuild;
+  }
+
+  @Override
+  public void execute() throws MojoExecutionException {
+    try {
+      LOCK.lock();
+      super.execute();
+    } finally {
+      LOCK.unlock();
+    }
   }
 
   @Override
@@ -289,7 +332,7 @@ public class BuildMojo extends AbstractDockerMojo {
       throws MojoExecutionException, GitAPIException, IOException, DockerException,
              InterruptedException {
 
-    if (skipDockerBuild) {
+    if (weShouldSkipDockerBuild()) {
       getLog().info("Skipping docker build");
       return;
     }
@@ -373,8 +416,8 @@ public class BuildMojo extends AbstractDockerMojo {
     }
 
     if (pushImage) {
-      pushImage(docker, imageName, getLog(), buildInfo, getRetryPushCount(), getRetryPushTimeout(),
-          isSkipDockerPush());
+      pushImage(docker, imageName, imageTags, getLog(), buildInfo, getRetryPushCount(),
+          getRetryPushTimeout(), isSkipDockerPush());
     }
 
     if (saveImageToTarArchive != null) {
@@ -629,6 +672,17 @@ public class BuildMojo extends AbstractDockerMojo {
           commands.add("RUN " + run);
         }
       }
+    }
+
+    if (healthcheck != null && healthcheck.containsKey("cmd")) {
+      final StringBuffer healthcheckBuffer = new StringBuffer("HEALTHCHECK ");
+      if (healthcheck.containsKey("options")) {
+        healthcheckBuffer.append(healthcheck.get("options"));
+        healthcheckBuffer.append(" ");
+      }
+      healthcheckBuffer.append("CMD ");
+      healthcheckBuffer.append(healthcheck.get("cmd"));
+      commands.add(healthcheckBuffer.toString());
     }
 
     if (exposesSet.size() > 0) {
